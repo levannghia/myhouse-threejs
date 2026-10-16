@@ -14,6 +14,11 @@ export class Walker {
     this.vy = 0;
     this.keys = {};
     this.enabled = false;
+    this.eyeOffset = 0; // GSAP chỉnh khi ngồi xuống
+    this.frozen = false; // đang chạy hiệu ứng (ngồi, dịch chuyển): không nhận phím đi
+    this.seated = false;
+    this.onStand = null;
+    this.bob = 0;
     this.ray = new THREE.Raycaster();
     this.ray.firstHitOnly = true;
     addEventListener('keydown', (e) => (this.keys[e.code] = true));
@@ -51,7 +56,9 @@ export class Walker {
     const k = this.keys;
     const f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
     const s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
-    if (f || s) {
+    const moving = (f || s) && !this.frozen;
+    if (moving && this.seated) this.onStand?.();
+    if (moving) {
       const yaw = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ').y;
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
       // hướng phải của camera = (cos yaw, 0, -sin yaw)
@@ -72,7 +79,10 @@ export class Walker {
       this.vy -= 9.8 * dt;
       this.feet.y = Math.max(fy, this.feet.y + this.vy * dt);
     }
-    this.eyeY += (this.feet.y + EYE - this.eyeY) * Math.min(1, dt * 12);
-    this.camera.position.set(this.feet.x, this.eyeY, this.feet.z);
+    // nhún nhẹ theo bước chân cho chuyển động mềm hơn
+    this.bob = moving ? this.bob + dt * (k.ShiftLeft || k.ShiftRight ? 13 : 8.5) : this.bob * 0.9;
+    const bobY = moving ? Math.sin(this.bob) * 0.025 : 0;
+    this.eyeY += (this.feet.y + EYE + this.eyeOffset - this.eyeY) * Math.min(1, dt * 12);
+    this.camera.position.set(this.feet.x, this.eyeY + bobY, this.feet.z);
   }
 }

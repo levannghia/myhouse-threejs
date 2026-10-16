@@ -39,13 +39,24 @@
     #lock[hidden] { display: none; }
     #lock .card { background: rgba(10, 15, 25, 0.85); padding: 22px 30px; border-radius: 14px; max-width: 380px; margin: 16px; line-height: 1.7; }
     kbd { background: #fff2; border: 1px solid #fff4; border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+    #fade { position: fixed; inset: 0; background: #05070a; opacity: 0; visibility: hidden; pointer-events: none; }
+    #tip {
+      position: fixed; left: 0; top: 0; padding: 5px 10px; border-radius: 8px; background: rgba(18, 22, 28, 0.82);
+      color: #fff; font-size: 12px; pointer-events: none; opacity: 0; visibility: hidden; white-space: nowrap;
+    }
+    #toast {
+      position: fixed; bottom: 52px; left: 50%; margin-left: -160px; width: 320px; text-align: center; padding: 8px 14px;
+      border-radius: 20px; background: rgba(232, 178, 122, 0.95); color: #1a1208; font-weight: 600; font-size: 13px;
+      opacity: 0; visibility: hidden; pointer-events: none;
+    }
     @media (max-width: 640px) { #panel { width: auto; right: 12px; } }
   </style>
   <script type="importmap">
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/index.js"
       }
     }
   </script>
@@ -55,6 +66,7 @@
   <div id="panel">
     <h1>Biệt thự Bê tông</h1>
     <div class="sub">3 tầng · 12 × 18m · mái dốc + hộp lam gỗ</div>
+    <div class="sub" id="source"></div>
     <div class="row"><label>Chế độ</label>
       <button data-mode="orbit">Xem ngoài</button><button data-mode="walk">Đi bộ</button></div>
     <div class="row"><label>Thời gian</label>
@@ -69,11 +81,14 @@
   <div id="room"></div>
   <div id="hint"></div>
   <div id="cross"></div>
+  <div id="tip"></div>
+  <div id="toast"></div>
+  <div id="fade"></div>
   <div id="lock" hidden>
     <div class="card">
       <b>Bấm để bắt đầu đi bộ</b><br />
       <kbd>W A S D</kbd> đi · <kbd>Shift</kbd> chạy · <kbd>Chuột</kbd> nhìn<br />
-      <kbd>E</kbd> mở/đóng cửa · <kbd>Esc</kbd> nhả chuột
+      <kbd>E</kbd> / <kbd>Click</kbd> dùng đồ vật, mở cửa · <kbd>Esc</kbd> nhả chuột
     </div>
   </div>
   <script type="module" src="./src/main.js"></script>

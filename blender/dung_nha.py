@@ -378,6 +378,8 @@ class Builder:
         self.cur.objects.link(ob)
         if parent is not None:
             ob.parent = parent
+        else:
+            ob['level'] = self.lvl  # glTF không có collection: web gom object theo thuộc tính này
         if matrix3 is not None:
             ob.matrix_basis = conv(matrix3)
         return ob
@@ -394,13 +396,24 @@ class Builder:
             except Exception:
                 pass
 
-    def obj(self, name, me, mats, matrix3, parent=None):
+    @staticmethod
+    def flags(ob, floor=False, collide=True, cast=True):
+        """Cờ giống builder.js (xuất ra glTF extras -> userData trên web). Chỉ ghi giá trị khác mặc định."""
+        if floor:
+            ob['floor'] = True
+        if not collide:
+            ob['collide'] = False
+        if not cast:
+            ob['cast'] = False
+
+    def obj(self, name, me, mats, matrix3, parent=None, **fl):
         ob = bpy.data.objects.new(name, me)
         self.link(ob, matrix3, parent)
         self._post(ob, mats)
+        self.flags(ob, **fl)
         return ob
 
-    def box(self, mat, x0, y0, z0, x1, y1, z1, parent=None, name=None):
+    def box(self, mat, x0, y0, z0, x1, y1, z1, parent=None, name=None, **fl):
         ax, bx = min(x0, x1), max(x0, x1)
         ay, by = min(y0, y1), max(y0, y1)
         az, bz = min(z0, z1), max(z0, z1)
@@ -409,7 +422,7 @@ class Builder:
         if parent is not None:
             pos -= self.p3[parent.name]
         me = mesh_box(name, bx - ax, by - ay, bz - az, mat)
-        return self.obj(name, me, mat, trs(pos), parent)
+        return self.obj(name, me, mat, trs(pos), parent, **fl)
 
     def empty(self, name, pos=(0, 0, 0), rot=(0, 0, 0)):
         ob = bpy.data.objects.new(name, None)
@@ -418,9 +431,9 @@ class Builder:
         self.p3[name] = Vector(pos)
         return self.link(ob, trs(pos, rot))
 
-    def slab(self, x0, z0, x1, z1, y_top, thick, top, bottom):
+    def slab(self, x0, z0, x1, z1, y_top, thick, top, bottom, collide=True):
         e = self.M['concrete']
-        return self.box([e, e, top, bottom, e, e], x0, y_top - thick, z0, x1, y_top, z1)
+        return self.box([e, e, top, bottom, e, e], x0, y_top - thick, z0, x1, y_top, z1, floor=True, collide=collide)
 
     def wall(self, mat, axis, c, a0, a1, y0, y1, t, openings=(), outer=None, inner=None, out=1):
         material = mat
@@ -456,22 +469,22 @@ class Builder:
     def glass_pane(self, axis, c, a0, a1, y0, y1, parent=None):
         f, M = 0.05, self.M
 
-        def put(mat, s0, s1, yy0, yy1, t):
+        def put(mat, s0, s1, yy0, yy1, t, **fl):
             if axis == 'x':
-                return self.box(mat, s0, yy0, c - t / 2, s1, yy1, c + t / 2, parent)
-            return self.box(mat, c - t / 2, yy0, s0, c + t / 2, yy1, s1, parent)
+                return self.box(mat, s0, yy0, c - t / 2, s1, yy1, c + t / 2, parent, **fl)
+            return self.box(mat, c - t / 2, yy0, s0, c + t / 2, yy1, s1, parent, **fl)
 
-        put(M['glass'], a0, a1, y0, y1, 0.02)
-        put(M['frame'], a0, a1, y0, y0 + f, 0.07)
-        put(M['frame'], a0, a1, y1 - f, y1, 0.07)
-        put(M['frame'], a0, a0 + f, y0, y1, 0.07)
-        put(M['frame'], a1 - f, a1, y0, y1, 0.07)
+        put(M['glass'], a0, a1, y0, y1, 0.02, cast=False)
+        put(M['frame'], a0, a1, y0, y0 + f, 0.07, collide=False)
+        put(M['frame'], a0, a1, y1 - f, y1, 0.07, collide=False)
+        put(M['frame'], a0, a0 + f, y0, y1, 0.07, collide=False)
+        put(M['frame'], a1 - f, a1, y0, y1, 0.07, collide=False)
         n = math.ceil((a1 - a0) / 1.5)
         for i in range(1, n):
             a = a0 + ((a1 - a0) * i) / n
-            put(M['frame'], a - f / 2, a + f / 2, y0, y1, 0.07)
+            put(M['frame'], a - f / 2, a + f / 2, y0, y1, 0.07, collide=False)
 
-    def sloped(self, mat, x0, x1, zA, yA, zB, yB, h):
+    def sloped(self, mat, x0, x1, zA, yA, zB, yB, h, **fl):
         if zB < zA:
             zA, yA, zB, yB = zB, yB, zA, yA
         ln = math.hypot(zB - zA, yB - yA)
@@ -479,10 +492,10 @@ class Builder:
         name = self.next_name(self.tag_name)
         me = mesh_box(name, x1 - x0, h, ln, mat)
         pos = ((x0 + x1) / 2, (yA + yB) / 2 + (h / 2) * math.cos(ang), (zA + zB) / 2 - (h / 2) * math.sin(ang))
-        return self.obj(name, me, mat, trs(pos, (-ang, 0, 0)))
+        return self.obj(name, me, mat, trs(pos, (-ang, 0, 0)), **fl)
 
     def downlight(self, x, y, z):
-        self.box(self.M['lightWarm'], x - 0.06, y - 0.02, z - 0.06, x + 0.06, y, z + 0.06)
+        self.box(self.M['lightWarm'], x - 0.06, y - 0.02, z - 0.06, x + 0.06, y, z + 0.06, collide=False, cast=False)
 
     def door(self, ob, kind, **props):
         ob['door'] = kind
@@ -503,10 +516,11 @@ class Builder:
             pass
         ob = bpy.data.objects.new(name, ld)
         self.link(ob, trs((x, y, z)))
+        ob['cd'], ob['dist'] = cd, dist  # cường độ gốc trên web (candela) + tầm chiếu
         self.lamps.append(ob)
         return ob
 
-    def spot(self, pos, target, cd, angle, penumbra, color='#ffc690'):
+    def spot(self, pos, target, cd, angle, penumbra, color='#ffc690', dist=6):
         name = self.next_name('DenHat')
         ld = bpy.data.lights.new(name, 'SPOT')
         ld.energy = cd * 4 * PI / 683 * 1000
@@ -516,6 +530,9 @@ class Builder:
         ld.shadow_soft_size = 0.05
         ob = bpy.data.objects.new(name, ld)
         self.cur.objects.link(ob)
+        ob['level'], ob['cd'], ob['dist'] = self.lvl, cd, dist
+        ob['angle'], ob['penumbra'] = angle, penumbra
+        ob['target'] = target  # điểm chiếu (hệ three)
         p, t = blender_vec(*pos), blender_vec(*target)
         ob.location = p
         ob.rotation_mode = 'QUATERNION'
@@ -524,12 +541,13 @@ class Builder:
         return ob
 
     # ---- nhóm (nội thất, cây): Empty <tầng>_<loại>_NN, mảnh con <tên>_<k>
-    def add_group(self, g, pos, rot_y=0.0, typ=None):
+    def add_group(self, g, pos, rot_y=0.0, typ=None, collide=True, cast=True):
         name = self.next_name(typ or g.type)
         e = self.empty(name, pos, (0, rot_y, 0))
         e.empty_display_size = 0.25
         for k, rec in enumerate(g.parts):
-            self._make_part('%s_%d' % (name, k), rec, e)
+            ob = self._make_part('%s_%d' % (name, k), rec, e)
+            self.flags(ob, collide=collide and rec['collide'], cast=cast)
         return e
 
     def _make_part(self, name, rec, parent):
@@ -558,20 +576,21 @@ class Grp:
         self.parts = []
 
     def _rec(self, **kw):
-        rec = dict(rot=(0, 0, 0), scl=(1, 1, 1))
+        rec = dict(rot=(0, 0, 0), scl=(1, 1, 1), collide=True)
         rec.update(kw)
         self.parts.append(rec)
         return rec
 
-    def part(self, mat, x0, y0, z0, x1, y1, z1):
+    def part(self, mat, x0, y0, z0, x1, y1, z1, noCollide=False):
         return self._rec(kind='box', mat=mat, dims=(abs(x1 - x0), abs(y1 - y0), abs(z1 - z0)),
-                         pos=((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2))
+                         pos=((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), collide=not noCollide)
 
-    def cyl(self, mat, r, h, x, y, z, seg=20, rb=None):
-        return self._rec(kind='cyl', mat=mat, rt=r, rb=r if rb is None else rb, h=h, seg=seg, pos=(x, y + h / 2, z))
+    def cyl(self, mat, r, h, x, y, z, seg=20, rb=None, noCollide=False):
+        return self._rec(kind='cyl', mat=mat, rt=r, rb=r if rb is None else rb, h=h, seg=seg, pos=(x, y + h / 2, z),
+                         collide=not noCollide)
 
-    def ico(self, mat, r=1.0):
-        return self._rec(kind='ico', mat=mat, r=r, pos=(0, 0, 0))
+    def ico(self, mat, r=1.0, noCollide=False):
+        return self._rec(kind='ico', mat=mat, r=r, pos=(0, 0, 0), collide=not noCollide)
 
     def sphere(self, mat, r):
         return self._rec(kind='sphere', mat=mat, r=r, pos=(0, 0, 0))
@@ -625,25 +644,25 @@ def gable(b, M, z_front, y0, holes):
 
 def railing(b, M, axis, c, a0, a1, y0, h=1.05):
     if axis == 'x':
-        b.box(M['glass'], a0, y0, c - 0.01, a1, y0 + h, c + 0.01)
-        b.box(M['steel'], a0, y0 + h, c - 0.03, a1, y0 + h + 0.04, c + 0.03)
+        b.box(M['glass'], a0, y0, c - 0.01, a1, y0 + h, c + 0.01, cast=False)
+        b.box(M['steel'], a0, y0 + h, c - 0.03, a1, y0 + h + 0.04, c + 0.03, collide=False)
     else:
-        b.box(M['glass'], c - 0.01, y0, a0, c + 0.01, y0 + h, a1)
-        b.box(M['steel'], c - 0.03, y0 + h, a0, c + 0.03, y0 + h + 0.04, a1)
+        b.box(M['glass'], c - 0.01, y0, a0, c + 0.01, y0 + h, a1, cast=False)
+        b.box(M['steel'], c - 0.03, y0 + h, a0, c + 0.03, y0 + h + 0.04, a1, collide=False)
 
 
 def stairs(b, M, x0, x1, z_start, z_end, y_start, y_end, risers):
     dz, dy = (z_end - z_start) / risers, (y_end - y_start) / risers
     for i in range(risers):
         top = y_start + (i + 1) * dy
-        b.box(M['oak'], x0, top - 0.06, z_start + i * dz, x1, top, z_start + (i + 1) * dz)
+        b.box(M['oak'], x0, top - 0.06, z_start + i * dz, x1, top, z_start + (i + 1) * dz, floor=True, collide=False)
 
 
 def ground(b, M):
     b.level('g')
     h = 3.6
     b.tag('San')
-    b.slab(-6, -4, 6, -18, 0, 0.3, M['marble'], M['concrete'])
+    b.slab(-6, -4, 6, -18, 0, 0.3, M['marble'], M['concrete'], collide=False)
 
     b.tag('MatTien')
     b.glass_pane('x', -4, -6, -3.9, 0, h)
@@ -665,7 +684,7 @@ def ground(b, M):
     while x < 2.66:
         b.box(M['timber'], x, 0.02, -3.92, x + 0.06, h - 0.07, -3.84, parent=door)
         x += 0.11
-    b.box(M['steel'], 2.45, 0.9, -3.84, 2.48, 2.1, -3.78, parent=door)
+    b.box(M['steel'], 2.45, 0.9, -3.84, 2.48, 2.1, -3.78, parent=door, collide=False)
     b.door(door, 'pivot', rot_three_y=PI / 2 * 0.92)
     b.box(M['timberV'], 1.3, 0, -4.15, 1.6, h, -3.85)
 
@@ -686,14 +705,14 @@ def ground(b, M):
 
     b.tag('CauThang')
     stairs(b, M, 4.65, 5.88, -7, -12.6, 0, L2, 20)
-    b.sloped(M['glass'], 4.59, 4.61, -7, 0, -12.6, L2, 1.0)
-    b.sloped(M['steel'], 4.57, 4.63, -7, 1.0, -12.6, L2 + 1.0, 0.04)
+    b.sloped(M['glass'], 4.59, 4.61, -7, 0, -12.6, L2, 1.0, cast=False)
+    b.sloped(M['steel'], 4.57, 4.63, -7, 1.0, -12.6, L2 + 1.0, 0.04, collide=False)
 
     b.tag('Gara')
     for x in (-4.6, 5.3):
         name = b.next_name(b.tag_name)
         b.obj(name, mesh_cyl(name, 0.11, 0.11, h, 16, M['steel']), M['steel'], trs((x, h / 2, 0.6)))
-    b.box(M['soffit'], -7.2, 3.2, 1.0, -4.6, 3.36, -4)
+    b.box(M['soffit'], -7.2, 3.2, 1.0, -4.6, 3.36, -4, collide=False)
     for x in (-3, -0.5, 2, 4.5):
         for z in (0.2, -2.4):
             b.downlight(x, h - 0.01, z)
@@ -728,7 +747,7 @@ def planter_greens(b, M, x0, x1, z, y_top):
             for f in faces:
                 for lp in f.loops:
                     lp[col] = rgb
-        ob = b.obj(name, _finish(name, bm, mat), mat, Matrix.Identity(4))
+        ob = b.obj(name, _finish(name, bm, mat), mat, Matrix.Identity(4), collide=False)
         return ob
 
     def hsl(hh, s, l):
@@ -764,15 +783,15 @@ def level2(b, M):
     b.slab(-6, 1.05, 6, -7, y, 0.3, M['woodFloor'], M['soffit'])
     b.slab(-6, -7, 3.2, -12.6, y, 0.3, M['woodFloor'], M['ceiling'])
     b.slab(-6, -12.6, 6, -18, y, 0.3, M['woodFloor'], M['ceiling'])
-    b.box(M['frame'], -6, y - 0.32, 1.05, 6, y, 1.08)
+    b.box(M['frame'], -6, y - 0.32, 1.05, 6, y, 1.08, collide=False)
 
     b.tag('BonCay')
     b.box(M['frame'], -4.6, y, 0.35, 6, y + 0.85, 1.05)
-    b.box(M['trunk'], -4.55, y + 0.85, 0.4, 5.95, y + 0.82, 1.0)
+    b.box(M['trunk'], -4.55, y + 0.85, 0.4, 5.95, y + 0.82, 1.0, collide=False)
     planter_greens(b, M, -4.55, 5.95, 1.07, y + 0.85)
     x = -4.6
     while x <= 6:
-        b.box(M['steel'], x, y + 0.85, 0.27, x + 0.03, y + 1.15, 0.3)
+        b.box(M['steel'], x, y + 0.85, 0.27, x + 0.03, y + 1.15, 0.3, collide=False)
         x += 1.325
     b.box(M['steel'], -4.6, y + 1.12, 0.26, 6, y + 1.15, 0.31)
 
@@ -788,7 +807,7 @@ def level2(b, M):
            outer=M['concrete'], out=-1)
 
     b.tag('KhoiPhai')
-    b.box(M['deck'], 1.5, y, 0.35, 5.6, y + 0.03, -3)
+    b.box(M['deck'], 1.5, y, 0.35, 5.6, y + 0.03, -3, floor=True, collide=False)
     b.box(M['concrete'], 5.6, y, 0.3, 6.0, 11.3, -5)
     b.glass_pane('x', -3, 3.6, 5.6, y, top)
     sliding_glass(b, 'CuaSinhHoatT2', 'x', -2.92, 1.6, 3.6, y, top, 1.9)
@@ -811,15 +830,15 @@ def level2(b, M):
     b.wall(P, 'z', -0.5, -13, -18, y, top, TI, [dict(a0=-13.08, a1=-13.95, y1=2.2)])
     b.wall(P, 'x', -14, -0.5, 6, y, top, TI, [dict(a0=0.6, a1=1.5, y1=2.2), dict(a0=4.2, a1=5.1, y1=2.2)])
     b.wall(P, 'z', 3.2, -14, -18, y, top, TI)
-    b.box(M['bathTile'], -6, y, -8, -1.5, y + 0.01, -13)
-    b.box(M['bathTile'], -0.5, y, -14, 3.2, y + 0.01, -18)
+    b.box(M['bathTile'], -6, y, -8, -1.5, y + 0.01, -13, floor=True, collide=False)
+    b.box(M['bathTile'], -0.5, y, -14, 3.2, y + 0.01, -18, floor=True, collide=False)
 
     b.tag('CauThang')
     railing(b, M, 'z', 3.2, -7, -12.6, y)
     railing(b, M, 'x', -7, 3.2, 5.9, y)
     stairs(b, M, 3.25, 4.5, -12.6, -7, y, L3, 17)
-    b.sloped(M['glass'], 4.49, 4.51, -12.6, y, -7, L3, 1.0)
-    b.sloped(M['steel'], 4.47, 4.53, -12.6, y + 1.0, -7, L3 + 1.0, 0.04)
+    b.sloped(M['glass'], 4.49, 4.51, -12.6, y, -7, L3, 1.0, cast=False)
+    b.sloped(M['steel'], 4.47, 4.53, -12.6, y + 1.0, -7, L3 + 1.0, 0.04, collide=False)
 
     b.lamp(-2.5, top - 0.3, -4, 12, 9)
     b.lamp(3.8, top - 0.3, -5, 10, 7)
@@ -839,7 +858,7 @@ def level3(b, M):
     b.slab(1.5, 0.3, 6, -7, y, 0.3, M['woodFloor'], M['ceiling'])
     b.slab(-6, -7, 3.2, -12.6, y, 0.3, M['woodFloor'], M['ceiling'])
     b.slab(-6, -12.6, 6, -18, y, 0.3, M['woodFloor'], M['ceiling'])
-    b.box(M['frame'], 1.5, y - 0.35, 0.3, 5.6, y + 0.05, 0.36)
+    b.box(M['frame'], 1.5, y - 0.35, 0.3, 5.6, y + 0.05, 0.36, collide=False)
 
     b.tag('DauHoi')
     gable(b, M, 0, y - 0.3, [])
@@ -847,16 +866,16 @@ def level3(b, M):
     b.box(M['concrete'], -6.125, y, -0.3, -5.875, roofY(-6), -17.7)
 
     b.tag('HopPhongNgu')
-    b.box(M['deck'], 1.5, y, 0.3, 5.6, y + 0.03, -1.2)
+    b.box(M['deck'], 1.5, y, 0.3, 5.6, y + 0.03, -1.2, floor=True, collide=False)
     for i in range(5):
         fin = b.box(M['timberV'], -0.13, 0, -0.025, 0.13, 2.65, 0.025)
         fin.matrix_basis = conv(trs((1.85 + i * 0.32, y + 0.05 + 1.325, 0.15), (0, 0.95, 0)))
     x = 3.4
     while x < 5.6:
-        b.box(M['steel'], x, y, 0.14, x + 0.02, y + 1.1, 0.16)
+        b.box(M['steel'], x, y, 0.14, x + 0.02, y + 1.1, 0.16, collide=False)
         x += 0.12
-    b.box(M['steel'], 3.35, y + 1.08, 0.12, 5.6, y + 1.12, 0.18)
-    b.box(M['invisible'], 1.5, y, 0.1, 5.6, y + 1.1, 0.2)
+    b.box(M['steel'], 3.35, y + 1.08, 0.12, 5.6, y + 1.12, 0.18, collide=False)
+    b.box(M['invisible'], 1.5, y, 0.1, 5.6, y + 1.1, 0.2, cast=False)
     b.box(M['frame'], 1.5, top - 0.5, 0, 5.6, top + 0.3, 0.3)
     b.wall(None, 'z', 1.5, 0.3, -1.2, y, top, TE, [], outer=M['concrete'], out=1)
     b.glass_pane('x', -1.2, 1.5, 3.6, y, top - 0.5)
@@ -870,7 +889,7 @@ def level3(b, M):
     b.wall(P, 'x', -5, -1.5, 5.6, y, top, TI, [dict(a0=3.6, a1=4.5, y1=2.2)])
     b.wall(P, 'x', -7, -1.5, 3.2, y, top, TI, [dict(a0=1.0, a1=1.9, y1=2.2)])
     b.wall(P, 'z', 3.2, -7, -14, y, top, TI, [dict(a0=-12.8, a1=-13.7, y1=2.2)])
-    b.box(M['bathTile'], -1.5, y, -0.3, 1.5, y + 0.01, -5)
+    b.box(M['bathTile'], -1.5, y, -0.3, 1.5, y + 0.01, -5, floor=True, collide=False)
 
     b.tag('CauThang')
     railing(b, M, 'x', -7, 4.5, 5.9, y)
@@ -879,10 +898,10 @@ def level3(b, M):
     b.tag('SanThuong')
     b.glass_pane('x', -14, 1.5, 3.6, y, top)
     sliding_glass(b, 'CuaSanThuong', 'x', -13.92, 3.6, 5.4, y, top, -1.8)
-    b.box(M['glass'], 5.4, y, -14.01, 6, top, -13.99)
+    b.box(M['glass'], 5.4, y, -14.01, 6, top, -13.99, cast=False)
     b.wall(None, 'z', 1.5, -14, -18, y, PEAK, TE, [dict(a0=-15, a1=-16.6, y1=2.6)], outer=M['concrete'], out=1)
     sliding_glass(b, 'CuaGiaDinhT3', 'z', 1.5, -15, -16.6, y, y + 2.6, 1.4)
-    b.box(M['deck'], 1.6, y, -14, 6, y + 0.03, -18)
+    b.box(M['deck'], 1.6, y, -14, 6, y + 0.03, -18, floor=True, collide=False)
     railing(b, M, 'x', -18, 1.6, 6, y)
     railing(b, M, 'z', 6, -14, -18, y)
 
@@ -902,13 +921,13 @@ def roof(b, M):
     name = b.next_name(b.tag_name)
     pos = ((x0 + x1) / 2 - math.sin(ang) * t / 2, (y0 + y1) / 2 + math.cos(ang) * t / 2, -9)
     b.obj(name, mesh_box(name, ln, t, 18.6, mats), mats, trs(pos, (0, 0, ang)))
-    b.box(M['soffit'], -6.75, y0 - 0.35, 0.3, -6.6, y0 + 0.2, -18.3)
+    b.box(M['soffit'], -6.75, y0 - 0.35, 0.3, -6.6, y0 + 0.2, -18.3, collide=False)
 
     b.tag('MaiBang')
     b.box([c, c, M['concrete'], M['ceiling'], c, c], 1.5, ROOF, 0.3, 6, ROOF + 0.3, -14)
     for i in range(4):
         yy = ROOF + 0.38 + i * 0.12
-        b.box(M['steel'], 1.5, yy, 0.22, 5.6, yy + 0.05, 0.3)
+        b.box(M['steel'], 1.5, yy, 0.22, 5.6, yy + 0.05, 0.3, collide=False)
     b.box(M['concrete'], 1.2, ROOF, 0.3, 1.5, PEAK, -14)
     b.box(M['frame'], 1.5, ROOF + 0.3, -14, 6, ROOF + 0.85, -13.9)
 
@@ -918,16 +937,16 @@ def build_site(b, M):
     b.level('site')
     rnd = make_rng(1)
     b.tag('Nen')
-    b.box(M['grass'], -70, -0.25, 60, 70, -0.05, -70)
-    b.box(M['asphalt'], -70, -0.2, 16, 70, -0.04, 8.7)
-    b.box(M['render'], -70, -0.2, 8.7, 70, 0.1, 7.6)
-    b.box(M['asphalt'], -4.3, -0.2, 8.7, 3.6, 0.0, 7.4)
+    b.box(M['grass'], -70, -0.25, 60, 70, -0.05, -70, floor=True, collide=False, cast=False)
+    b.box(M['asphalt'], -70, -0.2, 16, 70, -0.04, 8.7, floor=True, collide=False, cast=False)
+    b.box(M['render'], -70, -0.2, 8.7, 70, 0.1, 7.6, floor=True, collide=False, cast=False)
+    b.box(M['asphalt'], -4.3, -0.2, 8.7, 3.6, 0.0, 7.4, floor=True, collide=False, cast=False)
     x = -68
     while x < 70:
-        b.box(M['render'], x, -0.04, 12.45, x + 3, -0.03, 12.25)
+        b.box(M['render'], x, -0.04, 12.45, x + 3, -0.03, 12.25, collide=False, cast=False)
         x += 6
-    b.box(M['paving'], -6, -0.3, 7.4, 6, 0, -4)
-    b.box(M['paving'], 6, -0.3, 7.4, 7.5, 0, -18)
+    b.box(M['paving'], -6, -0.3, 7.4, 6, 0, -4, floor=True, collide=False, cast=False)
+    b.box(M['paving'], 6, -0.3, 7.4, 7.5, 0, -18, floor=True, collide=False, cast=False)
 
     b.tag('HangRao')
     zf, fh = 7.2, 1.75
@@ -946,25 +965,26 @@ def build_site(b, M):
     # cổng mặc định mở như ảnh và như web
     leafL.location += blender_vec(-3.6, 0, 0)
     leafR.location += blender_vec(3.3, 0, 0)
+    leafL['is_open'] = leafR['is_open'] = True  # web: vị trí đóng = vị trí hiện tại - move_three
     wh = 2.0
     b.box(M['render'], -7.6, 0, 7.0, -7.4, wh, -27)
     b.box(M['render'], 7.4, 0, 7.0, 7.6, wh, -27)
     b.box(M['render'], -7.6, 0, -26.9, 7.6, wh, -27.1)
 
     b.tag('HoBoi')
-    b.box(M['stone'], -6, -0.3, -18, 6, 0, -19.6)
+    b.box(M['stone'], -6, -0.3, -18, 6, 0, -19.6, floor=True, collide=False, cast=False)
     px0, px1, pz0, pz1, c = -5, 3, -20.5, -24.5, 0.35
-    b.box(M['stone'], px0 - c, -0.3, pz0 + c, px1 + c, 0.03, pz0)
-    b.box(M['stone'], px0 - c, -0.3, pz1, px1 + c, 0.03, pz1 - c)
-    b.box(M['stone'], px0 - c, -0.3, pz0, px0, 0.03, pz1)
-    b.box(M['stone'], px1, -0.3, pz0, px1 + c, 0.03, pz1)
-    b.box(M['poolTile'], px0, -1.4, pz0, px1, -1.3, pz1)
-    b.box(M['poolTile'], px0, -1.4, pz0, px1, 0, pz0 - 0.02)
-    b.box(M['poolTile'], px0, -1.4, pz1 + 0.02, px1, 0, pz1)
-    b.box(M['poolTile'], px0, -1.4, pz0, px0 + 0.02, 0, pz1)
-    b.box(M['poolTile'], px1 - 0.02, -1.4, pz0, px1, 0, pz1)
-    b.box(M['water'], px0, -0.14, pz0, px1, -0.12, pz1)
-    b.box(M['invisible'], px0, -0.3, pz0, px1, 1.2, pz1)
+    b.box(M['stone'], px0 - c, -0.3, pz0 + c, px1 + c, 0.03, pz0, floor=True, collide=False)
+    b.box(M['stone'], px0 - c, -0.3, pz1, px1 + c, 0.03, pz1 - c, floor=True, collide=False)
+    b.box(M['stone'], px0 - c, -0.3, pz0, px0, 0.03, pz1, floor=True, collide=False)
+    b.box(M['stone'], px1, -0.3, pz0, px1 + c, 0.03, pz1, floor=True, collide=False)
+    b.box(M['poolTile'], px0, -1.4, pz0, px1, -1.3, pz1, collide=False)
+    b.box(M['poolTile'], px0, -1.4, pz0, px1, 0, pz0 - 0.02, collide=False)
+    b.box(M['poolTile'], px0, -1.4, pz1 + 0.02, px1, 0, pz1, collide=False)
+    b.box(M['poolTile'], px0, -1.4, pz0, px0 + 0.02, 0, pz1, collide=False)
+    b.box(M['poolTile'], px1 - 0.02, -1.4, pz0, px1, 0, pz1, collide=False)
+    b.box(M['water'], px0, -0.14, pz0, px1, -0.12, pz1, collide=False, cast=False)
+    b.box(M['invisible'], px0, -0.3, pz0, px1, 1.2, pz1, cast=False)
     for x in (4.2, 5.4):
         b.box(M['whiteGloss'], x - 0.32, 0.25, -20.8, x + 0.32, 0.35, -22.8)
         back = b.box(M['whiteGloss'], -0.32, -0.05, -0.4, 0.32, 0.05, 0.4)
@@ -980,7 +1000,7 @@ def build_site(b, M):
             r = 0 if i == 0 else 1.1 + rnd() * 0.6
             py = (3.6 + rnd() * 1.4) * s
             sc = (1.0 + rnd() * 0.6) * s
-            rec = g.ico(M['leaf2'] if i % 3 == 0 else M['leaf'])
+            rec = g.ico(M['leaf2'] if i % 3 == 0 else M['leaf'], noCollide=True)
             rec['pos'] = (math.cos(a) * r * s, py, math.sin(a) * r * s)
             rec['scl'] = (sc, sc, sc)
         b.add_group(g, (x, 0, z))
@@ -988,7 +1008,7 @@ def build_site(b, M):
     def shrub(x, z, s):
         mat = M['leaf'] if rnd() > 0.5 else M['leaf2']
         name = b.next_name('Bui')
-        b.obj(name, mesh_ico(name, s, mat), mat, trs((x, s * 0.7, z), (0, 0, 0), (1, 0.8, 1)))
+        b.obj(name, mesh_ico(name, s, mat), mat, trs((x, s * 0.7, z), (0, 0, 0), (1, 0.8, 1)), collide=False)
 
     z = -5
     while z > -17:
@@ -1004,13 +1024,13 @@ def build_site(b, M):
     b.box(M['frame'], 8.1, 3.3, 4.05, 21, 3.45, -14)
     x = 9.2
     while x < 20:
-        b.box(M['glass'], x, 4.2, 4.02, x + 1.4, 5.9, 4.05)
-        b.box(M['glass'], x, 1.0, 4.02, x + 1.4, 2.6, 4.05)
+        b.box(M['glass'], x, 4.2, 4.02, x + 1.4, 5.9, 4.05, collide=False, cast=False)
+        b.box(M['glass'], x, 1.0, 4.02, x + 1.4, 2.6, 4.05, collide=False, cast=False)
         x += 2.4
     name = b.next_name(b.tag_name)
     me = mesh_cyl(name, 0.0, 1.0, 1.0, 4, M['roofTile'])
     b.obj(name, me, M['roofTile'], trs((14.6, 6.6 + 1.3, -5), (0, PI / 4, 0), (9.8, 2.6, 13.6)))
-    b.box(M['roofTile'], 7.6, 3.5, 4.8, 21, 3.7, 3.4)
+    b.box(M['roofTile'], 7.6, 3.5, 4.8, 21, 3.7, 3.4, collide=False)
     b.box(M['render'], -48, 0, -25, -34, 34, -45)
     b.box(M['render'], 26, 0, -30, 40, 22, -44)
 
@@ -1020,8 +1040,8 @@ def furnish(b, M):
     rnd = make_rng(3)
     P = PI
 
-    def place(g, x, y, z, rot=0.0):
-        return b.add_group(g, (x, y, z), rot)
+    def place(g, x, y, z, rot=0.0, collide=True, cast=True):
+        return b.add_group(g, (x, y, z), rot, collide=collide, cast=cast)
 
     def sofa(w=2.6, d=0.95, mat=None):
         mat = mat or M['fabricLight']
@@ -1033,7 +1053,7 @@ def furnish(b, M):
         g.part(mat, w / 2 - 0.2, 0.45, -d / 2, w / 2, 0.65, d / 2)
         for i in range(3):
             x = -w / 2 + 0.45 + i * ((w - 0.9) / 2)
-            g.part(M['fabricAccent'], x - 0.22, 0.45, -d / 2 + 0.22, x + 0.22, 0.85, -d / 2 + 0.36)
+            g.part(M['fabricAccent'], x - 0.22, 0.45, -d / 2 + 0.22, x + 0.22, 0.85, -d / 2 + 0.36, noCollide=True)
         return g
 
     def table(w, d, h, top=None, leg=None):
@@ -1043,7 +1063,7 @@ def furnish(b, M):
         for sx in (-1, 1):
             for sz in (-1, 1):
                 g.part(leg, sx * (w / 2 - 0.08) - 0.025, 0, sz * (d / 2 - 0.08) - 0.025,
-                       sx * (w / 2 - 0.08) + 0.025, h - 0.05, sz * (d / 2 - 0.08) + 0.025)
+                       sx * (w / 2 - 0.08) + 0.025, h - 0.05, sz * (d / 2 - 0.08) + 0.025, noCollide=True)
         return g
 
     def chair(mat=None):
@@ -1058,16 +1078,16 @@ def furnish(b, M):
 
     def lamp_on(g, x, y, z):
         g.cyl(M['black'], 0.015, 0.3, x, y, z)
-        g.cyl(M['lightWarm'], 0.12, 0.18, x, y + 0.3, z)
+        g.cyl(M['lightWarm'], 0.12, 0.18, x, y + 0.3, z, noCollide=True)
 
     def bed(w=1.9, l=2.1):
         g = Grp('Giuong')
         g.part(M['walnut'], -w / 2 - 0.05, 0, -l / 2, w / 2 + 0.05, 0.3, l / 2)
         g.part(M['bedding'], -w / 2, 0.3, -l / 2 + 0.05, w / 2, 0.55, l / 2)
-        g.part(M['fabricAccent'], -w / 2 - 0.02, 0.5, l / 2 - 0.65, w / 2 + 0.02, 0.58, l / 2 - 0.2)
+        g.part(M['fabricAccent'], -w / 2 - 0.02, 0.5, l / 2 - 0.65, w / 2 + 0.02, 0.58, l / 2 - 0.2, noCollide=True)
         g.part(M['fabricDark'], -w / 2 - 0.2, 0, -l / 2 - 0.08, w / 2 + 0.2, 1.15, -l / 2)
         for sx in (-1, 1):
-            g.part(M['whiteGloss'], sx * w / 4 - 0.3, 0.55, -l / 2 + 0.1, sx * w / 4 + 0.3, 0.68, -l / 2 + 0.5)
+            g.part(M['whiteGloss'], sx * w / 4 - 0.3, 0.55, -l / 2 + 0.1, sx * w / 4 + 0.3, 0.68, -l / 2 + 0.5, noCollide=True)
         for sx in (-1, 1):
             g.part(M['walnut'], sx * (w / 2 + 0.55) - 0.25, 0, -l / 2, sx * (w / 2 + 0.55) + 0.25, 0.5, -l / 2 + 0.42)
             lamp_on(g, sx * (w / 2 + 0.55), 0.5, -l / 2 + 0.2)
@@ -1088,7 +1108,7 @@ def furnish(b, M):
             g.part(top, -w / 2 - 0.02, h, -d / 2 - 0.02, w / 2 + 0.02, h + 0.04, d / 2 + 0.02)
         n = max(1, js_round(w / 0.6))
         for i in range(1, n):
-            g.part(M['black'], -w / 2 + (w * i) / n - 0.004, 0.05, d / 2, -w / 2 + (w * i) / n + 0.004, h - 0.05, d / 2 + 0.005)
+            g.part(M['black'], -w / 2 + (w * i) / n - 0.004, 0.05, d / 2, -w / 2 + (w * i) / n + 0.004, h - 0.05, d / 2 + 0.005, noCollide=True)
         return g
 
     def tv(w=1.6):
@@ -1100,7 +1120,7 @@ def furnish(b, M):
         g = Grp('Chau')
         g.cyl(M['pot'], 0.22 * s, 0.45 * s, 0, 0, 0)
         for i in range(5):
-            rec = g.ico(M['leaf'] if i % 2 else M['leaf2'])
+            rec = g.ico(M['leaf'] if i % 2 else M['leaf2'], noCollide=True)
             px = (rnd() - 0.5) * 0.4 * s
             py = (0.75 + rnd() * 0.6) * s
             pz = (rnd() - 0.5) * 0.4 * s
@@ -1122,7 +1142,7 @@ def furnish(b, M):
         rows = math.floor(h / 0.38)
         for r in range(rows + 1):
             y = r * (h / rows)
-            g.part(M['oak'], -w / 2, y, -d / 2, w / 2, y + 0.025, d / 2)
+            g.part(M['oak'], -w / 2, y, -d / 2, w / 2, y + 0.025, d / 2, noCollide=True)
             if not books or r == rows:
                 continue
             x = -w / 2 + 0.05
@@ -1130,7 +1150,7 @@ def furnish(b, M):
                 bw = 0.025 + rnd() * 0.03
                 bh = 0.2 + rnd() * 0.1
                 ci = int(rnd() * 6)
-                g.part(M['book_%d' % ci], x, y + 0.025, -d / 2 + 0.04, x + bw, y + 0.025 + bh, d / 2 - 0.05)
+                g.part(M['book_%d' % ci], x, y + 0.025, -d / 2 + 0.04, x + bw, y + 0.025 + bh, d / 2 - 0.05, noCollide=True)
                 x += bw + 0.004 + (0.12 if rnd() < 0.08 else 0)
         return g
 
@@ -1144,19 +1164,19 @@ def furnish(b, M):
         g = Grp('Lavabo')
         g.part(M['walnut'], -w / 2, 0.35, -0.25, w / 2, 0.82, 0.25)
         g.part(M['marble'], -w / 2, 0.82, -0.26, w / 2, 0.86, 0.26)
-        g.part(M['whiteGloss'], -0.2, 0.86, -0.15, 0.2, 0.92, 0.15)
-        g.part(M['screen'], -w / 2, 1.1, -0.27, w / 2, 1.9, -0.25)
+        g.part(M['whiteGloss'], -0.2, 0.86, -0.15, 0.2, 0.92, 0.15, noCollide=True)
+        g.part(M['screen'], -w / 2, 1.1, -0.27, w / 2, 1.9, -0.25, noCollide=True)
         return g
 
     def tub():
         g = Grp('BonTam')
         g.part(M['whiteGloss'], -0.85, 0, -0.4, 0.85, 0.55, 0.4)
-        g.part(M['water'], -0.75, 0.4, -0.3, 0.75, 0.56, 0.3)
+        g.part(M['water'], -0.75, 0.4, -0.3, 0.75, 0.56, 0.3, noCollide=True)
         return g
 
     def shower(w=1.0, d=1.0):
         g = Grp('Sen')
-        g.part(M['stone'], -w / 2, 0, -d / 2, w / 2, 0.02, d / 2)
+        g.part(M['stone'], -w / 2, 0, -d / 2, w / 2, 0.02, d / 2, noCollide=True)
         g.part(M['glass'], -w / 2, 0, d / 2 - 0.01, w / 2 - 0.4, 2.0, d / 2 + 0.01)
         g.cyl(M['steel'], 0.12, 0.02, 0, 2.1, -d / 2 + 0.2)
         return g
@@ -1165,13 +1185,13 @@ def furnish(b, M):
         g = Grp('Xe')
         g.part(M['carPaint'], -0.9, 0.3, -2.35, 0.9, 0.85, 2.35)
         g.part(M['carPaint'], -0.82, 0.85, -1.2, 0.82, 1.38, 1.0)
-        g.part(M['screen'], -0.83, 0.92, 1.0, 0.83, 1.3, 1.05)
-        g.part(M['screen'], -0.84, 0.92, -1.1, 0.84, 1.3, 0.9)
-        g.part(M['lightWarm'], -0.8, 0.6, 2.35, -0.5, 0.7, 2.37)
-        g.part(M['lightWarm'], 0.5, 0.6, 2.35, 0.8, 0.7, 2.37)
+        g.part(M['screen'], -0.83, 0.92, 1.0, 0.83, 1.3, 1.05, noCollide=True)
+        g.part(M['screen'], -0.84, 0.92, -1.1, 0.84, 1.3, 0.9, noCollide=True)
+        g.part(M['lightWarm'], -0.8, 0.6, 2.35, -0.5, 0.7, 2.37, noCollide=True)
+        g.part(M['lightWarm'], 0.5, 0.6, 2.35, 0.8, 0.7, 2.37, noCollide=True)
         for sx in (-1, 1):
             for sz in (-1.45, 1.45):
-                rec = g.cyl(M['rubber'], 0.33, 0.24, 0, 0, 0)
+                rec = g.cyl(M['rubber'], 0.33, 0.24, 0, 0, 0, noCollide=True)
                 rec['pos'] = (sx * 0.82, 0.33, sz)
                 rec['rot'] = (0, 0, PI / 2)
         return g
@@ -1213,7 +1233,7 @@ def furnish(b, M):
     place(car(), -0.6, 0, 1.7, 0)
     place(cabinet(2.6, 0.45, 0.42, M['walnut']), -1.3, 0, -4.4)
     place(tv(1.9), -1.3, 1.05, -4.2)
-    place(rug(3.4, 2.4), -1.6, 0, -6.6, 0)
+    place(rug(3.4, 2.4), -1.6, 0, -6.6, 0, collide=False)
     place(sofa(2.9), -1.4, 0, -8.2, 0)
     place(sofa(1.8, 0.9, M['fabricDark']), -4.6, 0, -6.6, P / 2)
     place(table(1.2, 0.6, 0.38), -1.4, 0, -6.5)
@@ -1225,9 +1245,9 @@ def furnish(b, M):
         place(chair(), -2.6 + dx, 0, -12.75, 0)
         place(chair(), -2.6 + dx, 0, -11.25, P)
     for dx in (-0.6, 0, 0.6):
-        place(pendant(1.4), -2.6 + dx, 3.6, -12, 0)
+        place(pendant(1.4), -2.6 + dx, 3.6, -12, 0, collide=False, cast=False)
     place(cabinet(2.4, 0.85, 0.45, M['walnut'], M['marble']), -5.7, 0, -12, P / 2)
-    place(art(1.4, 0.9, M['art1']), -5.85, 1.5, -12, P / 2)
+    place(art(1.4, 0.9, M['art1']), -5.85, 1.5, -12, P / 2, collide=False)
     place(cabinet(3.6, 0.88, 0.6, M['whiteGloss'], M['marble']), 5.6, 0, -16, -P / 2)
     place(cabinet(3.6, 0.7, 0.35, M['whiteGloss']), 5.75, 1.5, -16, -P / 2)
     place(cabinet(0.9, 2.2, 0.65, M['black']), 5.55, 0, -14.4, -P / 2)
@@ -1238,13 +1258,13 @@ def furnish(b, M):
         s.cyl(M['fabricDark'], 0.19, 0.06, 0, 0.62, 0)
         place(s, 1.8 + dx, 0, -15.0)
     for dx in (-0.7, 0.7):
-        place(pendant(1.1), 1.8 + dx, 3.6, -15.8, 0)
+        place(pendant(1.1), 1.8 + dx, 3.6, -15.8, 0, collide=False, cast=False)
     place(table(1.6, 0.9, 0.74, M['oak']), -3.5, 0, -16.2)
     for dx in (-0.45, 0.45):
         place(chair(), -3.5 + dx, 0, -16.9, 0)
         place(chair(), -3.5 + dx, 0, -15.5, P)
     place(cabinet(1.6, 0.9, 0.38, M['oak']), 3.9, 0, -6.75, 0)
-    place(art(0.9, 1.2, M['art2']), 3.9, 1.3, -6.92, 0)
+    place(art(0.9, 1.2, M['art2']), 3.9, 1.3, -6.92, 0, collide=False)
     place(plant(0.9), 5.6, 0, -4.5)
     place(toilet(), 2.35, 0, -9.55, 0)
     place(vanity(0.8), 1.85, 0, -8.3, P / 2)
@@ -1254,12 +1274,12 @@ def furnish(b, M):
     y2 = 3.9
     b.level('l2')
     place(bed(1.9, 2.1), -3.3, y2, -6.85, 0)
-    place(rug(3.2, 2.2), -3.3, y2, -5.3, 0)
+    place(rug(3.2, 2.2), -3.3, y2, -5.3, 0, collide=False)
     place(cabinet(2.2, 0.5, 0.4, M['walnut']), -3.3, y2, -0.55, P)
     place(tv(1.5), -3.3, y2 + 1.0, -0.38, P)
     place(sofa(1.0, 0.85, M['fabricAccent']), 0.6, y2, -2.4, -P / 2)
     place(plant(1.1), 0.9, y2, -0.6)
-    place(art(1.6, 1.0, M['art1']), -5.85, y2 + 1.3, -6.5, P / 2)
+    place(art(1.6, 1.0, M['art1']), -5.85, y2 + 1.3, -6.5, P / 2, collide=False)
     place(wardrobe(4.6), -1.15, y2, -10.5, P / 2)
     place(wardrobe(4.6), 1.15, y2, -10.5, -P / 2)
     place(tub(), -4.6, y2, -12.4, 0)
@@ -1271,7 +1291,7 @@ def furnish(b, M):
     place(lounger(), 2.4, y2, -1.4, 0)
     place(lounger(), 3.4, y2, -1.4, 0)
     place(plant(1.2), 5.1, y2, -0.1)
-    place(art(1.0, 1.4, M['art2']), 1.58, y2 + 1.1, -10.5, P / 2)
+    place(art(1.0, 1.4, M['art2']), 1.58, y2 + 1.1, -10.5, P / 2, collide=False)
     place(bed(1.6, 2.0), -3.4, y2, -16.7, 0)
     place(table(1.2, 0.6, 0.75, M['oak']), -5.6, y2, -16.6, P / 2)
     place(chair(), -5.0, y2, -16.6, -P / 2)
@@ -1286,7 +1306,7 @@ def furnish(b, M):
     y3 = 7.2
     b.level('l3')
     place(bed(1.8, 2.1), 4.45, y3, -3.0, -P / 2)
-    place(rug(2.6, 1.6), 3.3, y3, -3.0, P / 2)
+    place(rug(2.6, 1.6), 3.3, y3, -3.0, P / 2, collide=False)
     place(chair(M['walnut']), 2.2, y3, -0.6, 0)
     place(chair(M['walnut']), 3.0, y3, -0.6, 0)
     place(table(0.5, 0.5, 0.45), 2.6, y3, -0.65)
@@ -1299,7 +1319,7 @@ def furnish(b, M):
     place(sofa(1.0, 0.85, M['fabricAccent']), 2.5, y3, -12.3, -P / 2)
     place(floor_lamp(), 2.7, y3, -11.3)
     place(sofa(2.4), 0, y3, -17.3, 0)
-    place(rug(2.6, 1.8, M['fabricAccent']), 0, y3, -15.9, 0)
+    place(rug(2.6, 1.8, M['fabricAccent']), 0, y3, -15.9, 0, collide=False)
     place(table(1.0, 0.6, 0.38), 0, y3, -15.9)
     place(lounger(), 3.0, y3, -16.6, P)
     place(lounger(), 4.2, y3, -16.6, P)
@@ -1494,6 +1514,13 @@ def bake_lightmaps(scene, out_dir, size=2048, samples=128, levels=LEVELS):
         img.filepath_raw = os.path.join(out_dir, 'LM_%s.exr' % lv)
         img.file_format = 'OPEN_EXR'
         img.save()
+        # bản PNG (sRGB 8-bit) cho web: nha-hien-dai/lightmaps/LM_<tầng>.png
+        png = os.path.join(out_dir, 'LM_%s.png' % lv)
+        vs, fmt = scene.view_settings, scene.render.image_settings
+        old = (vs.view_transform, vs.look, vs.exposure, fmt.file_format)
+        vs.view_transform, vs.look, vs.exposure, fmt.file_format = 'Standard', 'None', 0.0, 'PNG'
+        img.save_render(png, scene=scene)
+        vs.view_transform, vs.look, vs.exposure, fmt.file_format = old
         print('Đã bake %s -> %s' % (lv, img.filepath_raw))
 
 

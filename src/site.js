@@ -64,7 +64,6 @@ export function buildSite(b, M) {
   const water = b.box(M.water, px0, -0.14, pz0, px1, -0.12, pz1, { collide: false, cast: false });
   water.receiveShadow = false;
   b.box(M.invisible, px0, -0.3, pz0, px1, 1.2, pz1, { cast: false }); // không cho rơi xuống hồ
-  b.room('Hồ bơi & sân vườn', -7.5, -18, 7.5, -27, [3.5, -19, 0.7]);
 
   // Ghế tắm nắng bên hồ
   for (const x of [4.2, 5.4]) {

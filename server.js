@@ -30,6 +30,11 @@ http
     }
     fs.readFile(file, (err, data) => {
       if (err) {
+        // HEAD cho file không có: 204 thay vì 404 để web dò models/, lightmaps/ mà không báo lỗi console
+        if (req.method === 'HEAD') {
+          res.writeHead(204);
+          return res.end();
+        }
         res.writeHead(404);
         return res.end('Not found');
       }
