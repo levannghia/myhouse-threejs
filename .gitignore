@@ -1,0 +1,11 @@
+# file tạm của Blender
+*.blend1
+*.blend2
+
+# ảnh bake gốc (nặng) — web chỉ cần LM_<tầng>.png
+lightmaps/*.exr
+
+node_modules/
+Thumbs.db
+.DS_Store
+__pycache__/

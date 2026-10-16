@@ -1522,6 +1522,24 @@ def bake_lightmaps(scene, out_dir, size=2048, samples=128, levels=LEVELS):
         img.save_render(png, scene=scene)
         vs.view_transform, vs.look, vs.exposure, fmt.file_format = old
         print('Đã bake %s -> %s' % (lv, img.filepath_raw))
+        _note_lightmap(out_dir, lv)
+
+
+def _note_lightmap(out_dir, lv):
+    """Bake vào nha-hien-dai/lightmaps thì ghi tầng đó vào nha-hien-dai/assets.json để web biết mà tải."""
+    import json
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(out_dir)), 'assets.json')
+    if os.path.basename(os.path.abspath(out_dir)) != 'lightmaps' or not os.path.exists(path):
+        return
+    with open(path, encoding='utf-8') as f:
+        data = json.load(f)
+    lms = data.setdefault('lightmaps', [])
+    if lv not in lms:
+        lms.append(lv)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
 
 
 def main(argv):

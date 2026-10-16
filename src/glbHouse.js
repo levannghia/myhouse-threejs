@@ -41,7 +41,8 @@ function inherited(o, stop) {
   return f;
 }
 
-export async function loadGlbHouse(b, M, url) {
+// lightmapLevels: danh sách tầng có lightmap (từ assets.json); null = tự dò từng file (chỉ nên dùng với server.js)
+export async function loadGlbHouse(b, M, url, lightmapLevels = null) {
   const draco = new DRACOLoader();
   draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/draco/gltf/');
   const loader = new GLTFLoader();
@@ -62,7 +63,7 @@ export async function loadGlbHouse(b, M, url) {
   const texLoader = new THREE.TextureLoader();
   for (const lv of Object.keys(LEVELS)) {
     const path = `lightmaps/LM_${lv}.png`;
-    if (!(await fileExists(path))) continue;
+    if (lightmapLevels ? !lightmapLevels.includes(lv) : !(await fileExists(path))) continue;
     const t = await texLoader.loadAsync(path);
     t.flipY = false; // UV glTF đã lật v
     t.colorSpace = THREE.SRGBColorSpace;

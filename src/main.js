@@ -34,13 +34,21 @@ addEventListener('resize', resize);
 const M = createMaterials(renderer);
 const b = new Builder(scene, M);
 
-// Nguồn mô hình: ?glb=1 bắt buộc dùng GLB, ?glb=0 bắt buộc dựng bằng code, không có thì tự dò models/nha.glb
-const GLB_URL = 'models/nha.glb';
+// assets.json liệt kê file có sẵn (GLB, lightmap) để khỏi dò file — trên host tĩnh như GitHub Pages,
+// dò một file không tồn tại sẽ hiện lỗi 404 trên console. Không có assets.json thì mới dò (server.js trả 204).
+let assets = null;
+try {
+  const r = await fetch('assets.json', { cache: 'no-store' });
+  if (r.ok) assets = await r.json();
+} catch {}
+// Nguồn mô hình: ?glb=1 bắt buộc dùng GLB, ?glb=0 bắt buộc dựng bằng code, không có thì theo assets.json / tự dò
+const GLB_URL = assets?.glb || 'models/nha.glb';
 const glbParam = new URLSearchParams(location.search).get('glb');
+const hasGlb = assets ? !!assets.glb : await fileExists(GLB_URL);
 let source = 'code';
-if (glbParam === '1' || (glbParam !== '0' && (await fileExists(GLB_URL)))) {
+if (glbParam === '1' || (glbParam !== '0' && hasGlb)) {
   try {
-    await loadGlbHouse(b, M, GLB_URL);
+    await loadGlbHouse(b, M, GLB_URL, assets ? assets.lightmaps || [] : null);
     source = 'glb';
   } catch (err) {
     console.warn('Không tải được ' + GLB_URL + ', dựng nhà bằng code.', err);
