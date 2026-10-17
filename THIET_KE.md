@@ -9,6 +9,8 @@ bồn cây rủ chạy suốt mặt tiền tầng 2, gara mở dưới sàn đua
 |---|---|
 | Xem ngoài | kéo chuột xoay, lăn chuột zoom; **rê chuột vào đồ vật / cửa** (khung sáng + chú thích) rồi **click** để dùng |
 | Đi bộ | `W A S D`, `Shift` chạy, chuột nhìn; nhìn vào đồ vật / cửa (≤ 2.8 m) rồi bấm `E` hoặc **click**; `Esc` nhả chuột |
+| Đi bộ (cảm ứng) | chạm giữ **nửa trái** màn hình → joystick (đẩy nhẹ đi chậm), **vuốt nửa phải** để nhìn; nút **Dùng** = phím `E`, nút **Chạy** bật/tắt chạy. Điện thoại không cần pointer lock; laptop màn cảm ứng chuyển sang chế độ này ngay lần chạm đầu (`src/touch.js`) |
+| Xem ngoài (cảm ứng) | kéo một ngón xoay, chụm hai ngón zoom; **chạm** đồ vật / cửa để dùng |
 | Cắt tầng | nút T1 / T2 / T3 — tầng phía trên bay lên rồi ẩn, camera bay tới góc nhìn mặt bằng |
 | Ngày / hoàng hôn | ánh sáng, bầu trời, đèn chuyển dần trong ~2.6 giây |
 | Đi tới phòng | menu "Đi tới phòng" (màn đen ngắn khi dịch chuyển) |
@@ -222,6 +224,36 @@ hoặc trong Blender: tab *Scripting* › mở `blender/xuat_glb.py` › Run Scr
 - Lightmap: nếu có `lightmaps/LM_<tầng>.png` (bake bằng `--bake … --bake-dir nha-hien-dai/lightmaps`, script ghi cả `.exr` và `.png`) thì gán làm `lightMap` kênh `uv1` cho mesh tầng đó. Muốn có `uv1`, file .blend phải có UV `Lightmap` trước khi xuất (`--lightmap` hoặc `--bake`).
 - Danh sách phòng ("Đi tới phòng", tên phòng khi đi bộ) nằm trong `src/rooms.js`, dùng chung cho cả hai chế độ.
 
+### 6.5 Hiệu năng (điện thoại, máy không có card rời) — `src/perf.js`
+
+| | Trước | Sau |
+|---|---|---|
+| Draw call mỗi khung | 1690 | ~372 |
+| Mesh trong scene | 1684 | 360 |
+| Đèn tính trên mỗi pixel | 19 | 3 (Thấp) / 6 (TB) / tất cả (Cao) |
+| Thời gian vẽ 1 khung (RTX 3060, 1024×768, mức Cao) | 8.4 ms | 4.2 ms |
+
+Những gì đã làm:
+1. **Gộp hình theo vật liệu** lúc tải trang: phần tĩnh của mỗi tầng, các mảnh trong từng đồ vật, từng cánh cửa. Mảnh có chuyển động riêng (gối sofa, chăn, lưng ghế nằm, thân tủ…) được giữ riêng nên tương tác vẫn như cũ.
+   Sách trên kệ (632 cuốn) thành một `InstancedMesh` mỗi kệ.
+2. **BVH** (`three-mesh-bvh`) cho mọi mesh va chạm / sàn: raycast của đi bộ vẫn nhanh dù mesh gộp rất lớn.
+3. **Pool đèn**: đèn gốc bị ẩn, chỉ vài đèn thật đặt vào các đèn gần camera nhất (đổi chỗ mỗi 0.25 giây, sáng dần nên không giật). Số đèn cố định nên shader không biên dịch lại khi đi lại.
+4. **Mức chất lượng** (bảng điều khiển › *Chất lượng hình ảnh*, lưu trong trình duyệt):
+
+| Mức | Độ phân giải | Khử răng cưa | Bóng đổ | Đèn |
+|---|---|---|---|---|
+| Thấp | 1× (điện thoại 2–3× → 1×) | tắt | tắt | 3 + mặt trời |
+| Trung bình | tối đa 1.5× | bật | 2048 | 6 + 2 đèn hắt |
+| Cao | tối đa 2× | bật | 4096 | tất cả |
+
+5. **Tự động** (mặc định): đoán theo máy — điện thoại hoặc GPU phần mềm (SwiftShader, Basic Render…) → Thấp; GPU tích hợp (Intel UHD/Iris, Mali, Adreno đời cũ…) → Trung bình; còn lại → Cao.
+   Nếu FPS trung bình < 30 trong 2.5 giây thì tự hạ một mức (có thông báo); đã ở Thấp mà vẫn chậm thì giảm độ phân giải còn 75%.
+   Khử răng cưa chỉ đổi được khi tạo WebGL, nên đổi mức có liên quan sẽ áp dụng sau khi tải lại trang.
+6. Dòng nhỏ dưới nút chất lượng hiện `fps · draw call · số đèn` để theo dõi.
+7. Màn hình dọc: góc nhìn tự mở rộng để thấy hết mặt tiền; bảng điều khiển tự thu gọn (nút ☰).
+
+Lưu ý: nút "Xuất GLB" trên web giờ xuất mô hình **đã gộp** (mất tên từng object). Muốn có bản đầy đủ tên để làm tiếp trong Blender, dùng `blender/dung_nha.py`.
+
 ## 7. Cấu trúc code
 
 ```
@@ -235,6 +267,7 @@ nha-hien-dai/
   src/builder.js    hàm dựng tường có lỗ cửa, sàn, kính, cửa tương tác
   src/walker.js     đi bộ góc nhìn thứ nhất, va chạm, leo cầu thang, nhún bước, ngồi
   src/interact.js   tương tác đồ vật (GSAP): chọn bằng chuột / tầm nhìn, khung sáng, các hành động
+  src/perf.js       tối ưu: gộp hình, sách instanced, BVH, pool đèn, mức chất lượng, tự hạ khi FPS thấp
   src/textures.js   texture sinh bằng canvas (bê tông, gỗ, gạch…)
   src/rand.js       số ngẫu nhiên có seed (chung thuật toán với script Blender)
   src/rooms.js      danh sách phòng + điểm xuất hiện (dùng cho cả 2 chế độ)

@@ -11,8 +11,12 @@
       position: fixed; top: 12px; left: 12px; width: 260px; padding: 12px 14px; border-radius: 12px;
       background: rgba(18, 22, 28, 0.72); color: #eef; font-size: 13px; backdrop-filter: blur(6px);
     }
-    #panel h1 { margin: 0 0 2px; font-size: 16px; }
+    #panel h1 { margin: 0 0 2px; font-size: 16px; display: flex; align-items: center; justify-content: space-between; }
+    #fold { flex: 0 0 auto; padding: 2px 9px; font-size: 14px; }
+    #panel.folded .row, #panel.folded .sub { display: none; }
     #panel .sub { opacity: 0.7; font-size: 12px; margin-bottom: 8px; }
+    #panel #qAuto { flex: 2 1 100%; }
+    #panel #perf { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
     .row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
     .row label { width: 100%; opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
     button, select {
@@ -49,6 +53,26 @@
       border-radius: 20px; background: rgba(232, 178, 122, 0.95); color: #1a1208; font-weight: 600; font-size: 13px;
       opacity: 0; visibility: hidden; pointer-events: none;
     }
+    /* điều khiển cảm ứng khi đi bộ (src/touch.js) */
+    canvas#scene { touch-action: none; }
+    #touch { position: fixed; inset: 0; pointer-events: none; opacity: 0; visibility: hidden; user-select: none; -webkit-user-select: none; }
+    #joy {
+      position: absolute; left: 28px; bottom: 28px; width: 120px; height: 120px; border-radius: 50%;
+      background: rgba(18, 22, 28, 0.35); border: 2px solid #ffffff55; box-shadow: 0 2px 12px #0005;
+    }
+    #knob {
+      position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px; border-radius: 50%;
+      background: #ffffffcc; box-shadow: 0 2px 8px #0006;
+    }
+    #touch button {
+      position: absolute; pointer-events: auto; touch-action: none; border-radius: 50%; padding: 0;
+      background: rgba(18, 22, 28, 0.55); border: 2px solid #ffffff55; color: #fff; font-weight: 600; -webkit-tap-highlight-color: transparent;
+    }
+    #tUse { right: 28px; bottom: 40px; width: 84px; height: 84px; font-size: 16px; }
+    #tRun { right: 124px; bottom: 30px; width: 62px; height: 62px; font-size: 13px; }
+    #touch button.on { background: #e8b27a; color: #1a1208; border-color: #e8b27a; }
+    body.touch-walk #hint { bottom: 168px; left: 16px; right: 16px; transform: none; }
+    body.touch-walk #toast { bottom: 200px; }
     @media (max-width: 640px) { #panel { width: auto; right: 12px; } }
   </style>
   <script type="importmap">
@@ -56,7 +80,8 @@
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
-        "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/index.js"
+        "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/index.js",
+        "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.module.js"
       }
     }
   </script>
@@ -64,7 +89,7 @@
 <body>
   <canvas id="scene" tabindex="0"></canvas>
   <div id="panel">
-    <h1>Biệt thự Bê tông</h1>
+    <h1>Biệt thự Bê tông <button id="fold" title="Thu gọn / mở bảng">☰</button></h1>
     <div class="sub">3 tầng · 12 × 18m · mái dốc + hộp lam gỗ</div>
     <div class="sub" id="source"></div>
     <div class="row"><label>Chế độ</label>
@@ -74,6 +99,10 @@
     <div class="row"><label>Cắt tầng (xem mặt bằng)</label>
       <button data-floor="all">Tất cả</button><button data-floor="g">T1</button>
       <button data-floor="l2">T2</button><button data-floor="l3">T3</button></div>
+    <div class="row"><label>Chất lượng hình ảnh</label>
+      <button data-quality="auto" id="qAuto">Tự động</button><button data-quality="low">Thấp</button>
+      <button data-quality="medium">TB</button><button data-quality="high">Cao</button></div>
+    <div class="sub" id="perf"></div>
     <div class="row"><label>Đi tới phòng</label>
       <select id="teleport"><option value="">— chọn phòng —</option></select></div>
     <div class="row"><button id="export">Xuất GLB (mở bằng Blender)</button></div>
@@ -83,6 +112,11 @@
   <div id="cross"></div>
   <div id="tip"></div>
   <div id="toast"></div>
+  <div id="touch">
+    <div id="joy"><div id="knob"></div></div>
+    <button id="tRun" title="Chạy (bật / tắt)">Chạy</button>
+    <button id="tUse" title="Dùng đồ vật, mở cửa">Dùng</button>
+  </div>
   <div id="fade"></div>
   <div id="lock" hidden>
     <div class="card">

@@ -28,6 +28,11 @@ const TYPES = {
   Sen: ['Vòi sen', 'bật / tắt vòi sen'],
   Thung: ['Thùng đồ', 'xếp lại thùng'],
 };
+// loại đồ vật theo tên nhóm (perf.js dùng để gộp mảnh bên trong mà vẫn giữ mảnh có chuyển động riêng)
+export function interactiveType(name) {
+  const m = NAME_RE.exec(name || '');
+  return m && TYPES[m[2]] ? m[2] : null;
+}
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 const tmpQ = new THREE.Quaternion();
 
@@ -196,6 +201,27 @@ export function createInteractions({ scene, camera, b, M, walker, toggleDoor, ti
     Tu: cabinetDoor,
     TuQuanAo: cabinetDoor,
     KeSach(item) {
+      // perf.js gom sách thành 1 InstancedMesh: rút sách = dời ma trận của một instance
+      const inst = item.root.children.find((c) => c.isInstancedMesh && c.userData.books);
+      if (inst) {
+        const i = (Math.random() * inst.count) | 0;
+        const m0 = new THREE.Matrix4();
+        inst.getMatrixAt(i, m0);
+        const home0 = (inst.userData.home ??= {})[i] ??= m0.clone();
+        const p0 = new THREE.Vector3().setFromMatrixPosition(home0), k = { t: 0 };
+        const m = new THREE.Matrix4();
+        const set = () => {
+          m.copy(home0).setPosition(p0.x, p0.y + 0.02 * k.t, p0.z + 0.2 * k.t);
+          inst.setMatrixAt(i, m);
+          inst.instanceMatrix.needsUpdate = true;
+        };
+        gsap.killTweensOf(inst.userData[`b${i}`] ??= k);
+        inst.userData[`b${i}`] = k;
+        gsap.timeline()
+          .to(k, { t: 1, duration: 0.45, ease: 'power2.out', onUpdate: set })
+          .to(k, { t: 0, duration: 0.5, ease: 'power2.in', onUpdate: set }, '+=1.6');
+        return 'Rút một cuốn sách…';
+      }
       const books = meshes(item, (c) => c.material.name.startsWith('book_'));
       if (!books.length) return 'Kệ trống';
       const bk = books[(Math.random() * books.length) | 0], h = home(bk);

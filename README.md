@@ -10,7 +10,9 @@ Chi tiết thiết kế và quy trình Blender: [THIET_KE.md](THIET_KE.md).
 node server.js
 ```
 
-Mở http://localhost:5174 — không cần `npm install`. Three.js và GSAP tải từ CDN jsdelivr qua importmap trong `index.html`.
+Mở http://localhost:5174 — không cần `npm install`. Three.js, GSAP và three-mesh-bvh tải từ CDN jsdelivr qua importmap trong `index.html`.
+
+Đã tối ưu cho điện thoại / máy không card rời (gộp hình, pool đèn, mức chất lượng tự động) — xem mục 6.5 trong [THIET_KE.md](THIET_KE.md).
 
 ## Đưa lên GitHub Pages
 

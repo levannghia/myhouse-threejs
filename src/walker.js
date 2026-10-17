@@ -13,6 +13,8 @@ export class Walker {
     this.feet = new THREE.Vector3();
     this.vy = 0;
     this.keys = {};
+    this.move = { x: 0, y: 0 }; // joystick cảm ứng: x = sang phải, y = tiến lên, độ dài ≤ 1 (src/touch.js)
+    this.run = false; // nút Chạy cảm ứng
     this.enabled = false;
     this.eyeOffset = 0; // GSAP chỉnh khi ngồi xuống
     this.frozen = false; // đang chạy hiệu ứng (ngồi, dịch chuyển): không nhận phím đi
@@ -54,8 +56,9 @@ export class Walker {
   update(dt) {
     if (!this.enabled) return;
     const k = this.keys;
-    const f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
-    const s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+    const f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0) + this.move.y;
+    const s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0) + this.move.x;
+    const running = k.ShiftLeft || k.ShiftRight || this.run;
     const moving = (f || s) && !this.frozen;
     if (moving && this.seated) this.onStand?.();
     if (moving) {
@@ -65,7 +68,8 @@ export class Walker {
       let mx = fx * f + Math.cos(yaw) * s;
       let mz = fz * f - Math.sin(yaw) * s;
       const len = Math.hypot(mx, mz);
-      const speed = (k.ShiftLeft || k.ShiftRight ? 4.2 : 2.0) * dt;
+      // joystick đẩy nhẹ thì đi chậm; phím (kể cả đi chéo) luôn đủ tốc
+      const speed = (running ? 4.2 : 2.0) * Math.min(1, Math.hypot(f, s)) * dt;
       mx = (mx / len) * speed;
       mz = (mz / len) * speed;
       if (mx && !this.blocked(Math.sign(mx), 0, Math.abs(mx))) this.feet.x += mx;
@@ -80,7 +84,7 @@ export class Walker {
       this.feet.y = Math.max(fy, this.feet.y + this.vy * dt);
     }
     // nhún nhẹ theo bước chân cho chuyển động mềm hơn
-    this.bob = moving ? this.bob + dt * (k.ShiftLeft || k.ShiftRight ? 13 : 8.5) : this.bob * 0.9;
+    this.bob = moving ? this.bob + dt * (running ? 13 : 8.5) : this.bob * 0.9;
     const bobY = moving ? Math.sin(this.bob) * 0.025 : 0;
     this.eyeY += (this.feet.y + EYE + this.eyeOffset - this.eyeY) * Math.min(1, dt * 12);
     this.camera.position.set(this.feet.x, this.eyeY + bobY, this.feet.z);

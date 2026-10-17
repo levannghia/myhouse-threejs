@@ -9,15 +9,22 @@ import { buildHouse } from './house.js';
 import { buildSite } from './site.js';
 import { furnish } from './furniture.js';
 import { Walker } from './walker.js';
+import { TouchControls } from './touch.js';
 import { addRooms } from './rooms.js';
 import { fileExists, loadGlbHouse } from './glbHouse.js';
-import { createInteractions } from './interact.js';
+import { createInteractions, interactiveType } from './interact.js';
+import { QUALITY, ORDER as Q_ORDER, detectQuality, savedQuality, saveQuality, mergeStatic, LightPool, FpsGovernor } from './perf.js';
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: false });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// Chất lượng: lựa chọn đã lưu (Tự động / Thấp / Trung bình / Cao); Tự động = đoán theo máy + hạ dần khi FPS thấp
+const detected = detectQuality();
+let qualityPref = savedQuality();
+let quality = qualityPref === 'auto' ? detected.quality : qualityPref;
+const contextAA = QUALITY[quality].aa; // khử răng cưa chỉ đặt được lúc tạo context
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: contextAA, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY[quality].dpr));
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = QUALITY[quality].shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
@@ -26,6 +33,8 @@ const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 5
 // đăng ký sớm: trong lúc chờ tải GLB cửa sổ có thể đổi kích thước
 function resize() {
   camera.aspect = innerWidth / Math.max(1, innerHeight);
+  // màn hình dọc (điện thoại): mở rộng góc nhìn để thấy hết mặt tiền
+  camera.fov = camera.aspect < 1 ? Math.min(78, 50 / Math.sqrt(camera.aspect)) : 50;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 }
@@ -64,12 +73,15 @@ if (source === 'code') {
 addRooms(b);
 resize();
 scene.updateMatrixWorld(true); // raycast va chạm cần ma trận ngay cả trước khung hình đầu
+// Gộp hình theo vật liệu: 1690 draw call -> vài trăm (đồ vật và cửa vẫn chuyển động được)
+const merged = mergeStatic(b, (o) => interactiveType(o.name));
+scene.updateMatrixWorld(true);
 document.getElementById('source').textContent = source === 'glb' ? 'Mô hình: GLB từ Blender' : 'Mô hình: dựng bằng code';
 
 // ---------------------------------------------------------------- ánh sáng ---
 const sun = new THREE.DirectionalLight(0xffffff, 3);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(QUALITY[quality].shadowSize || 1024, QUALITY[quality].shadowSize || 1024);
 Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 120 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.03;
@@ -193,17 +205,28 @@ function setMode(m, placeFn) {
       walker.enabled = mode === 'walk';
     };
     transition(start);
-    lockCard.hidden = false;
-    gsap.fromTo('#lock .card', { scale: 0.92, autoAlpha: 0 }, { scale: 1, autoAlpha: 1, duration: 0.4, ease: 'back.out(1.6)' });
+    if (touch.active) touch.show(); // cảm ứng: không cần pointer lock
+    else {
+      lockCard.hidden = false;
+      gsap.fromTo('#lock .card', { scale: 0.92, autoAlpha: 0 }, { scale: 1, autoAlpha: 1, duration: 0.4, ease: 'back.out(1.6)' });
+    }
   } else {
     walker.controls.unlock();
     lockCard.hidden = true;
+    touch.hide();
     homeView();
   }
 }
-lockCard.addEventListener('click', () => walker.controls.lock());
+const touch = new TouchControls({
+  walker, camera, canvas,
+  onUse: () => { if (mode === 'walk') useWalkTarget(); },
+  // chạm màn hình lần đầu (laptop cảm ứng): bỏ thẻ pointer lock, hiện joystick
+  onActivate: () => { if (mode === 'walk') { lockCard.hidden = true; touch.show(); } },
+});
+lockCard.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') touch.activate(); });
+lockCard.addEventListener('click', () => { if (!touch.active) walker.controls.lock(); });
 walker.controls.addEventListener('lock', () => (lockCard.hidden = true));
-walker.controls.addEventListener('unlock', () => { if (mode === 'walk') lockCard.hidden = false; });
+walker.controls.addEventListener('unlock', () => { if (mode === 'walk' && !touch.active) lockCard.hidden = false; });
 
 // màn đen ngắn khi chuyển chỗ (đổi chế độ, dịch chuyển tới phòng)
 function transition(cb) {
@@ -375,6 +398,64 @@ setTime('dusk', true);
 showFloor('all', true);
 setMode('orbit');
 
+// ---------------------------------------------------------------- chất lượng ---
+const pool = new LightPool(scene, b.lamps, QUALITY[quality].lights);
+const spots = b.lamps.filter((l) => l.light.isSpotLight).map((l) => l.light);
+let extraLow = false; // bước cuối khi đã ở mức Thấp mà vẫn chậm: giảm độ phân giải còn 75%
+function applyQuality(q, why = '') {
+  const prevShadows = renderer.shadowMap.enabled;
+  quality = q;
+  const Q = QUALITY[q];
+  renderer.setPixelRatio(Math.min(devicePixelRatio, Q.dpr) * (extraLow && q === 'low' ? 0.75 : 1));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = Q.shadows;
+  if (Q.shadows && sun.shadow.mapSize.x !== Q.shadowSize) {
+    sun.shadow.mapSize.set(Q.shadowSize, Q.shadowSize);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
+  // bật/tắt bóng đổ làm đổi shader: đánh dấu biên dịch lại một lần
+  if (prevShadows !== Q.shadows) scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+  for (const s of spots) s.visible = Q.spots;
+  pool.setSize(Q.lights);
+  document.querySelectorAll('[data-quality]').forEach((el) => el.classList.toggle('on', el.dataset.quality === qualityPref));
+  $('#qAuto').textContent = qualityPref === 'auto' ? `Tự động: ${Q.label}${extraLow ? ' (75%)' : ''}` : 'Tự động';
+  if (why) ui.toast(why);
+}
+const governor = new FpsGovernor((fps) => {
+  if (qualityPref !== 'auto') return;
+  const i = Q_ORDER.indexOf(quality);
+  if (i > 0) applyQuality(Q_ORDER[i - 1], `Máy hơi chậm (${fps.toFixed(0)} fps) — giảm chất lượng xuống ${QUALITY[Q_ORDER[i - 1]].label}`);
+  else if (!extraLow) {
+    extraLow = true;
+    applyQuality('low', `Vẫn chậm (${fps.toFixed(0)} fps) — giảm độ phân giải`);
+  } else governor.enabled = false;
+});
+governor.enabled = qualityPref === 'auto';
+document.querySelectorAll('[data-quality]').forEach((el) => el.addEventListener('click', () => {
+  qualityPref = el.dataset.quality;
+  saveQuality(qualityPref);
+  extraLow = false;
+  governor.enabled = qualityPref === 'auto';
+  const q = qualityPref === 'auto' ? detected.quality : qualityPref;
+  applyQuality(q, QUALITY[q].aa !== contextAA ? 'Khử răng cưa sẽ đổi sau khi tải lại trang' : '');
+}));
+applyQuality(quality);
+// bảng điều khiển thu gọn được (mặc định thu gọn trên màn hình hẹp)
+const panel = $('#panel');
+$('#fold').addEventListener('click', (e) => { e.stopPropagation(); panel.classList.toggle('folded'); });
+if (innerWidth < 640) gsap.delayedCall(1.6, () => panel.classList.add('folded'));
+// chỉ số hiệu năng nhỏ trên bảng điều khiển
+const perfEl = $('#perf');
+let perfT = 0, perfN = 0;
+function perfTick(dt) {
+  perfT += dt;
+  perfN++;
+  if (perfT < 1) return;
+  perfEl.textContent = `${Math.round(perfN / perfT)} fps · ${renderer.info.render.calls} draw call · ${pool.active ? pool.slots.length : b.lamps.length} đèn`;
+  perfT = perfN = 0;
+}
+
 // Cảnh mở màn: bảng điều khiển trượt vào, camera bay từ xa tới mặt tiền
 gsap.from('#panel', { x: -40, autoAlpha: 0, duration: 0.9, ease: 'power3.out', delay: 0.2 });
 gsap.from('#panel .row', { y: 10, autoAlpha: 0, duration: 0.5, stagger: 0.07, ease: 'power2.out', delay: 0.45 });
@@ -390,16 +471,20 @@ renderer.setAnimationLoop(() => {
     setRoomLabel(r ? r.name : 'Ngoài trời');
     const t = walkTarget();
     const d = t?.door || (!t?.item && nearestDoor());
+    const key = touch.active ? 'Dùng' : 'E';
     hint.textContent = t?.item
-      ? `E / click: ${interactions.verbOf(t.item, t.mesh)} (${t.item.label})`
-      : d ? `E: ${d.open ? 'đóng' : 'mở'} ${d.name}` : '';
+      ? `${touch.active ? key : 'E / click'}: ${interactions.verbOf(t.item, t.mesh)} (${t.item.label})`
+      : d ? `${key}: ${d.open ? 'đóng' : 'mở'} ${d.name}` : '';
   } else {
     orbit.update();
     setRoomLabel('');
     hint.textContent = 'Kéo chuột để xoay · Lăn để zoom · Rê chuột vào đồ vật / cửa rồi click để tương tác';
   }
   interactions.refresh();
+  pool.update(camera, dt);
+  governor.tick(dt);
   renderer.render(scene, camera);
+  perfTick(dt);
 });
 
-window.__app = { scene, camera, orbit, b, walker, setMode, setTime, showFloor, renderer, source, interactions, toggleDoor, gsap };
+window.__app = { scene, camera, orbit, b, walker, setMode, setTime, showFloor, renderer, source, interactions, toggleDoor, gsap, pool, applyQuality, merged, detected, touch, get quality() { return quality; } };
