@@ -254,6 +254,31 @@ Những gì đã làm:
 
 Lưu ý: nút "Xuất GLB" trên web giờ xuất mô hình **đã gộp** (mất tên từng object). Muốn có bản đầy đủ tên để làm tiếp trong Blender, dùng `blender/dung_nha.py`.
 
+### 6.6 Tối ưu trong Blender + bake lightmap — `blender/toi_uu.py`
+
+Chạy trên file `.blend` bạn đang làm (đã chỉnh vật liệu…). **File gốc không bị ghi đè**, kết quả lưu thành `<tên>_toiuu.blend`.
+
+```bash
+D:/Blender/blender.exe -b nha-hien-dai/blender/nha_hien_dai.blend --python nha-hien-dai/blender/toi_uu.py
+```
+
+hoặc trong Blender: tab *Scripting* › mở `blender/toi_uu.py` › Run Script. Tuỳ chọn sau `--`: `--size 2048` (ảnh lightmap), `--samples 256`, `--levels g,l2,l3`, `--no-bake`.
+
+Script làm 4 việc:
+1. **Gộp mesh** (giống Ctrl+J): phần tĩnh mỗi tầng gộp theo cờ `floor / collide / cast`; mảnh trong từng đồ vật và từng cánh cửa cũng gộp — nhưng giữ riêng các mảnh có chuyển động riêng và giữ tên Empty đồ vật / `DOOR_*`, nên web vẫn tương tác được. 1760 → 1040 object (632 cuốn sách để riêng, web gom thành InstancedMesh).
+2. **UV `Lightmap`** cho từng tầng (Smart UV Project).
+3. **Bake ánh sáng đèn trong nhà** cho tầng `g`, `l2`, `l3` bằng GPU (CUDA; OptiX báo lỗi biên dịch kernel với driver hiện tại nên để sau). Lúc bake, bầu trời và mặt trời bị tắt → lightmap chỉ chứa ánh sáng của đèn (trực tiếp + phản xạ), không chứa màu vật liệu.
+   Ra `lightmaps/LM_<tầng>.png` (+ `.exr` gốc, bị `.gitignore` bỏ qua); `assets.json` tự ghi tầng đã bake và `lightmapScale` (PNG lưu giảm sáng ½ để vùng sát đèn không bị cắt).
+4. Lưu `nha_hien_dai_toiuu.blend` và xuất `models/nha.glb`.
+
+Trên web (`src/glbHouse.js`, `src/main.js`, `src/perf.js`):
+- Mesh tầng đã bake nhận `lightMap` (kênh `uv1`, cường độ = `lightmapScale × π`).
+- **Đèn realtime của tầng đã bake bị tắt hẳn** (không vào pool đèn), kể cả 2 đèn hắt tường bê tông → mỗi pixel gần như chỉ còn mặt trời + bầu trời: nhẹ nhất cho máy yếu.
+- Nút ngày / hoàng hôn vẫn đúng: bầu trời, mặt trời realtime; cường độ lightmap nhân theo mức đèn (ban ngày dịu đi).
+- Hạn chế: bật/tắt đèn bằng tương tác chỉ đổi chao đèn sáng/tối, không đổi ánh sáng đã bake trong phòng; đồ vật di chuyển (ghế kéo, xe chạy) mang theo ánh sáng đã bake của chỗ cũ.
+
+Khi đổi vật liệu, vị trí đèn hay nội thất trong Blender: lưu `nha_hien_dai.blend` rồi chạy lại `toi_uu.py`.
+
 ## 7. Cấu trúc code
 
 ```
@@ -275,4 +300,5 @@ nha-hien-dai/
   models/nha.glb    nhà xuất từ Blender (xoá file này = quay về dựng bằng code)
   blender/dung_nha.py  dựng lại nhà trong Blender: cùng toạ độ + tên + cờ va chạm, UV lightmap, bake
   blender/xuat_glb.py  xuất scene NhaHienDai ra models/nha.glb với đúng tuỳ chọn cho web
+  blender/toi_uu.py    gộp mesh + UV lightmap + bake GPU + lưu *_toiuu.blend + xuất GLB (mục 6.6)
 ```

@@ -1443,6 +1443,8 @@ def lightmap_meshes(col):
         names = {m.name for m in o.data.materials if m}
         if names and names <= NO_LIGHTMAP:
             continue
+        if names and all(n.startswith('book_') for n in names):  # 632 cuốn sách nhỏ: không cần lightmap
+            continue
         out.append(o)
     return out
 
@@ -1483,12 +1485,54 @@ def make_lightmap_uv(scene, levels=LEVELS):
         print('UV lightmap: %s (%d mesh)' % (lv, len(meshes)))
 
 
-def bake_lightmaps(scene, out_dir, size=2048, samples=128, levels=LEVELS):
-    """Bake ánh sáng (trực tiếp + gián tiếp, không màu vật liệu) ra LM_<tầng>.png — dùng làm lightMap (uv1) trên web."""
+BAKE_LEVELS = ('g', 'l2', 'l3')  # mái và sân không có đèn trong nhà
+LM_PNG_EXPOSURE = -1.0  # PNG lưu giá trị x0.5 để đèn sáng gần bóng không bị cắt ở 1.0; web nhân lại (assets.json: lightmapScale)
+
+
+def use_gpu(scene):
+    """Bake/render bằng GPU nếu có (CUDA > OptiX > HIP > Metal), không có thì CPU."""
+    try:
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        for kind in ('CUDA', 'OPTIX', 'HIP', 'METAL', 'ONEAPI'):  # CUDA trước: OptiX hay lỗi với driver cũ
+            try:
+                prefs.compute_device_type = kind
+                prefs.get_devices()
+            except Exception:
+                continue
+            gpus = [d for d in prefs.devices if d.type == kind]
+            if gpus:
+                for d in prefs.devices:
+                    d.use = d.type == kind
+                scene.cycles.device = 'GPU'
+                print('Cycles dùng GPU: %s (%s)' % (gpus[0].name, kind))
+                return True
+    except Exception as e:
+        print('Không bật được GPU:', e)
+    scene.cycles.device = 'CPU'
+    return False
+
+
+def bake_lightmaps(scene, out_dir, size=2048, samples=512, levels=BAKE_LEVELS, lights_only=True):
+    """Bake ánh sáng (trực tiếp + gián tiếp, không màu vật liệu) ra LM_<tầng>.png — dùng làm lightMap (uv1) trên web.
+
+    lights_only=True: chỉ ánh sáng của đèn trong nhà (tắt bầu trời + mặt trời lúc bake). Trên web bầu trời/mặt trời
+    vẫn là realtime nên nút ngày/hoàng hôn còn đúng, còn đèn realtime của các tầng đã bake được tắt hẳn (nhẹ máy).
+    """
     import os
     os.makedirs(out_dir, exist_ok=True)
     scene.render.engine = 'CYCLES'
     scene.cycles.samples = samples
+    use_gpu(scene)
+    restore = []
+    if lights_only:
+        bg = scene.world.node_tree.nodes.get('Background') if scene.world else None
+        if bg:
+            restore.append((bg.inputs['Strength'], 'default_value', bg.inputs['Strength'].default_value))
+            bg.inputs['Strength'].default_value = 0.0
+        for o in scene.collection.all_objects:
+            if o.type == 'LIGHT' and o.data.type == 'SUN':
+                restore.append((o, 'hide_render', o.hide_render))
+                o.hide_render = True
     bk = scene.render.bake
     bk.use_pass_direct, bk.use_pass_indirect, bk.use_pass_color = True, True, False
     bk.margin = 4
@@ -1518,11 +1562,13 @@ def bake_lightmaps(scene, out_dir, size=2048, samples=128, levels=LEVELS):
         png = os.path.join(out_dir, 'LM_%s.png' % lv)
         vs, fmt = scene.view_settings, scene.render.image_settings
         old = (vs.view_transform, vs.look, vs.exposure, fmt.file_format)
-        vs.view_transform, vs.look, vs.exposure, fmt.file_format = 'Standard', 'None', 0.0, 'PNG'
+        vs.view_transform, vs.look, vs.exposure, fmt.file_format = 'Standard', 'None', LM_PNG_EXPOSURE, 'PNG'
         img.save_render(png, scene=scene)
         vs.view_transform, vs.look, vs.exposure, fmt.file_format = old
         print('Đã bake %s -> %s' % (lv, img.filepath_raw))
         _note_lightmap(out_dir, lv)
+    for obj, attr, val in restore:
+        setattr(obj, attr, val)
 
 
 def _note_lightmap(out_dir, lv):
@@ -1537,9 +1583,10 @@ def _note_lightmap(out_dir, lv):
     lms = data.setdefault('lightmaps', [])
     if lv not in lms:
         lms.append(lv)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
-            f.write('\n')
+    data['lightmapScale'] = 2 ** -LM_PNG_EXPOSURE
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
 
 
 def main(argv):
@@ -1576,9 +1623,9 @@ def main(argv):
     if TAO_UV_LIGHTMAP or 'lightmap' in argv or 'bake' in argv:
         make_lightmap_uv(scene)
     if 'bake' in argv:  # --bake 2048 --bake-samples 128 --bake-dir D:/lightmaps --bake-levels g,l2
-        levels = tuple(argv['bake-levels'].split(',')) if 'bake-levels' in argv else LEVELS
+        levels = tuple(argv['bake-levels'].split(',')) if 'bake-levels' in argv else BAKE_LEVELS
         bake_lightmaps(scene, argv.get('bake-dir', bpy.path.abspath('//lightmaps') if bpy.data.filepath else 'lightmaps'),
-                       int(argv['bake']) if argv['bake'] is not True else 2048, int(argv.get('bake-samples', 128)), levels)
+                       int(argv['bake']) if argv['bake'] is not True else 2048, int(argv.get('bake-samples', 512)), levels)
 
     n = sum(1 for o in root.all_objects)
     print('Đã dựng %d object trong scene %s' % (n, SCENE_NAME))
@@ -1622,4 +1669,5 @@ def parse_args():
     return out
 
 
-main(parse_args())
+if __name__ == "__main__":  # chạy trực tiếp (Run Script / blender --python); toi_uu.py import file này
+    main(parse_args())

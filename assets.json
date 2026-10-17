@@ -1,4 +1,7 @@
 {
   "glb": "models/nha.glb",
-  "lightmaps": []
+  "lightmaps": [
+    "g"
+  ],
+  "lightmapScale": 2.0
 }

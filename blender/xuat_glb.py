@@ -51,4 +51,5 @@ def _arg_path():
     return DEFAULT_OUT
 
 
-export_glb(_arg_path(), draco='--no-draco' not in sys.argv)
+if __name__ == "__main__":  # toi_uu.py import file này để dùng export_glb
+    export_glb(_arg_path(), draco='--no-draco' not in sys.argv)

@@ -197,7 +197,7 @@ export function mergeStatic(b, itemType) {
 // Số đèn cố định nên shader không phải biên dịch lại khi di chuyển.
 export class LightPool {
   constructor(scene, lamps, size) {
-    this.lamps = lamps.filter((l) => l.light.isPointLight);
+    this.lamps = lamps.filter((l) => l.light.isPointLight && !l.baked); // đèn đã bake vào lightmap thì bỏ
     this.scene = scene;
     this.slots = [];
     this.timer = 0;

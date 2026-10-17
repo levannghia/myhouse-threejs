@@ -330,7 +330,9 @@ export function createInteractions({ scene, camera, b, M, walker, toggleDoor, ti
       inner.position.set(x0 + pw / 2, c.y, zf + 0.003);
       const hinge = new THREE.Group();
       hinge.position.set(x0, c.y, zf + 0.012);
-      const leaf = new THREE.Mesh(new THREE.BoxGeometry(pw, h - 0.02, 0.02), body.material);
+      // cánh tủ tạo mới không có UV lightmap -> bỏ lightMap khỏi vật liệu của nó
+      const leafMat = body.material.lightMap ? Object.assign(body.material.clone(), { lightMap: null }) : body.material;
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(pw, h - 0.02, 0.02), leafMat);
       leaf.position.x = pw / 2;
       leaf.castShadow = true;
       const knob = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.18, 0.025), M.steel);

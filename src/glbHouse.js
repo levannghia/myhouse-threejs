@@ -42,7 +42,8 @@ function inherited(o, stop) {
 }
 
 // lightmapLevels: danh sách tầng có lightmap (từ assets.json); null = tự dò từng file (chỉ nên dùng với server.js)
-export async function loadGlbHouse(b, M, url, lightmapLevels = null) {
+// lightmapScale: PNG được lưu giảm sáng (assets.json) để không bị cắt ở 1.0 — nhân lại ở đây
+export async function loadGlbHouse(b, M, url, lightmapLevels = null, lightmapScale = 1) {
   const draco = new DRACOLoader();
   draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/draco/gltf/');
   const loader = new GLTFLoader();
@@ -93,7 +94,9 @@ export async function loadGlbHouse(b, M, url, lightmapLevels = null) {
         if (!lmCache.has(key)) {
           const c = m.material.clone();
           c.lightMap = lm;
-          c.lightMapIntensity = 1;
+          // bake Diffuse (không màu) của Cycles = độ rọi / π; three.js nhân albedo/π -> bù π
+          c.userData.lmBase = lightmapScale * Math.PI;
+          c.lightMapIntensity = c.userData.lmBase;
           lmCache.set(key, c);
         }
         m.material = lmCache.get(key);
@@ -113,7 +116,12 @@ export async function loadGlbHouse(b, M, url, lightmapLevels = null) {
       l.decay = 2;
       l.castShadow = false;
       if (l.isSpotLight && l.userData.penumbra != null) l.penumbra = l.userData.penumbra;
-      b.lamps.push({ light: l, base: cd });
+      // đèn của tầng đã bake: ánh sáng đã nằm trong lightmap -> tắt đèn realtime (nhẹ máy hơn nhiều)
+      let lv = null;
+      for (let p = l; p && !lv; p = p.parent) if (p.parent === b.scene) lv = p.name;
+      const baked = !!lightmaps[lv];
+      if (baked) l.visible = false;
+      b.lamps.push({ light: l, base: cd, baked });
     });
   }
   for (const l of remove) l.removeFromParent();
@@ -150,5 +158,7 @@ export async function loadGlbHouse(b, M, url, lightmapLevels = null) {
     b.door(DOOR_NAMES[id] || id, new THREE.Vector3(c.x, box.min.y, c.z), parts, open);
   }
   b.scene.updateMatrixWorld(true);
+  b.lightmapMats = [...lmCache.values()]; // main.js chỉnh cường độ theo ngày / hoàng hôn
+  b.bakedLevels = Object.keys(lightmaps);
   return gltf;
 }

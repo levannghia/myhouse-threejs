@@ -57,7 +57,7 @@ const hasGlb = assets ? !!assets.glb : await fileExists(GLB_URL);
 let source = 'code';
 if (glbParam === '1' || (glbParam !== '0' && hasGlb)) {
   try {
-    await loadGlbHouse(b, M, GLB_URL, assets ? assets.lightmaps || [] : null);
+    await loadGlbHouse(b, M, GLB_URL, assets ? assets.lightmaps || [] : null, assets?.lightmapScale || 1);
     source = 'glb';
   } catch (err) {
     console.warn('Không tải được ' + GLB_URL + ', dựng nhà bằng code.', err);
@@ -134,6 +134,8 @@ function applyTime(forceEnv) {
   renderer.toneMappingExposure = t.exp;
   for (const l of b.lamps) l.light.intensity = l.base * t.lamps * l.user;
   M.lightWarm.emissiveIntensity = t.glow;
+  // ánh sáng đèn đã bake vào lightmap: ban ngày đèn dịu đi như đèn realtime
+  for (const m of b.lightmapMats || []) m.lightMapIntensity = m.userData.lmBase * t.lamps;
   interactions?.updateGlow();
 }
 function setTime(mode, instant = false) {
@@ -400,7 +402,7 @@ setMode('orbit');
 
 // ---------------------------------------------------------------- chất lượng ---
 const pool = new LightPool(scene, b.lamps, QUALITY[quality].lights);
-const spots = b.lamps.filter((l) => l.light.isSpotLight).map((l) => l.light);
+const spots = b.lamps.filter((l) => l.light.isSpotLight && !l.baked).map((l) => l.light);
 let extraLow = false; // bước cuối khi đã ở mức Thấp mà vẫn chậm: giảm độ phân giải còn 75%
 function applyQuality(q, why = '') {
   const prevShadows = renderer.shadowMap.enabled;
@@ -452,7 +454,7 @@ function perfTick(dt) {
   perfT += dt;
   perfN++;
   if (perfT < 1) return;
-  perfEl.textContent = `${Math.round(perfN / perfT)} fps · ${renderer.info.render.calls} draw call · ${pool.active ? pool.slots.length : b.lamps.length} đèn`;
+  perfEl.textContent = `${Math.round(perfN / perfT)} fps · ${renderer.info.render.calls} draw call · ${pool.active ? pool.slots.length : pool.lamps.length} đèn${b.bakedLevels?.length ? " + lightmap" : ""}`;
   perfT = perfN = 0;
 }
 
